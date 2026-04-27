@@ -2,82 +2,61 @@ pipeline {
     agent any
 
     environment {
-        BUILD_TAG = "${env.BUILD_NUMBER}"
+        DOCKERHUB = "rshubham07"
     }
 
     stages {
-        stage('Build User Service') {
+
+        stage('Checkout') {
             steps {
-                sh 'docker build -t rshubham07/user-service:${BUILD_TAG} ./user-service'
+                checkout scm
             }
         }
 
-        stage('Push User Service') {
+        stage('Build user-service') {
+            steps {
+                sh 'docker build -t $DOCKERHUB/user-service:latest ./user-service'
+            }
+        }
+
+        stage('Build product-service') {
+            steps {
+                sh 'docker build -t $DOCKERHUB/product-service:latest ./product-service'
+            }
+        }
+
+        stage('Docker Login') {
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
+                    credentialsId: 'dockerhub',
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
-                    sh 'docker push rshubham07/user-service:${BUILD_TAG}'
                 }
             }
         }
 
-        stage('Build Product Service') {
+        stage('Push Images') {
             steps {
-                sh 'docker build -t rshubham07/product-service:${BUILD_TAG} ./product-service'
+                sh '''
+                    docker push $DOCKERHUB/user-service:latest
+                    docker push $DOCKERHUB/product-service:latest
+                '''
             }
         }
 
-        stage('Push Product Service') {
+        stage('Deploy to Kubernetes') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
-                    sh 'docker push rshubham07/product-service:${BUILD_TAG}'
+                withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_FILE')]) {
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG_FILE
+                        kubectl apply -f k8s/
+                        kubectl rollout status deployment/user-service
+                        kubectl rollout status deployment/product-service
+                    '''
                 }
             }
         }
-
-        stage('Deploy User Service') {
-            steps {
-                sh 'kubectl set image deployment/user-service user=rshubham07/user-service:${BUILD_TAG}'
-            }
-        }
-
-        stage('Deploy Product Service') {
-            steps {
-                sh 'kubectl set image deployment/product-service product=rshubham07/product-service:${BUILD_TAG}'
-            }
-        }
     }
-
-    post {
-    always {
-        sh 'docker logout || true'
-    }
-    success {
-        sh '''
-            # Kill anything on port 3000 and 3001 forcefully
-            docker ps -q --filter "publish=3000" | xargs -r docker stop
-            docker ps -q --filter "publish=3001" | xargs -r docker stop
-            
-            # Remove named containers if they exist
-            docker rm -f user-service-local || true
-            docker rm -f product-service-local || true
-
-            # Small wait to ensure ports are freed
-            sleep 2
-
-            # Run fresh containers
-            docker run -d --name user-service-local -p 3000:3000 rshubham07/user-service:${BUILD_TAG}
-            docker run -d --name product-service-local -p 3001:3000 rshubham07/product-service:${BUILD_TAG}
-        '''
-    }
-}
 }
