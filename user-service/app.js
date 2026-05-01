@@ -2,7 +2,7 @@ const express = require("express");
 const app = express();
 
 app.get("/", (req,res)=>{
-    res.send("User Service Running after 21th upgrade");
+    res.send("User Service Running after 22th upgrade");
 });
 
 app.listen(3000, ()=>{
